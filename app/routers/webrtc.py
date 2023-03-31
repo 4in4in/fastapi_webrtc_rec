@@ -1,8 +1,7 @@
 from uuid import uuid4
 
-from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
+from aiortc import RTCPeerConnection
 from fastapi import APIRouter
-from pydantic import BaseModel
 from app.schemas.offer import OfferSchema
 
 from app.services.webrtc import WebRTCService
