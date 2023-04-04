@@ -9,6 +9,8 @@ from aiortc import (
 from aiortc.contrib.media import MediaRecorder, MediaRelay
 
 from logging import getLogger
+
+from fastapi import HTTPException
 from app.schemas.offer import OfferSchema
 
 from app.utils.video_transform_track import VideoTransformTrack
@@ -21,7 +23,7 @@ class WebRTCService:
     def __init__(self, *, rec_path: str, logger=None) -> None:
         self._peer_connections = dict()
         self._logger = logger or getLogger(__name__)
-        self._relay = MediaRelay()  # or create for each client individually?
+        # self._relay = MediaRelay()  # or create for each client individually?
         self._rec_path = rec_path
 
     def _add_on_datachannel(self, connection: RTCPeerConnection, peer_id: UUID) -> None:
@@ -47,6 +49,7 @@ class WebRTCService:
         peer_id: UUID,
         recorder: MediaRecorder,
         transform: str,
+        relay: MediaRelay,
     ) -> None:
         @connection.on("track")
         def on_track(track: MediaStreamTrack):
@@ -55,11 +58,11 @@ class WebRTCService:
             if track.kind == "audio":
                 recorder.addTrack(track)
             elif track.kind == "video":
-                _track = self._relay.subscribe(track)
+                _track = relay.subscribe(track)
                 _transform_track = VideoTransformTrack(_track, transform)
                 connection.addTrack(_transform_track)
 
-                recorder.addTrack(self._relay.subscribe(track))
+                recorder.addTrack(relay.subscribe(track))
 
             @track.on("ended")
             async def on_ended():
@@ -67,21 +70,23 @@ class WebRTCService:
                 await recorder.stop()
 
     async def add_peer_connection(
-        self, peer_id: UUID, connection: RTCPeerConnection, params: OfferSchema
+        self, peer_id: UUID, params: OfferSchema
     ) -> OfferSchema:
         if peer_id in self._peer_connections:
             self._logger.error("peer %s is connected already!", peer_id)
-            raise Exception
+            raise HTTPException(409, "Client connected already")
+        connection = RTCPeerConnection()  # stun/turn can be passed here
 
         offer = RTCSessionDescription(params.sdp, params.type)
         self._peer_connections[peer_id] = connection
         self._logger.info("peer %s is connected", peer_id)
 
         recorder = MediaRecorder(f"{self._rec_path}/{str(peer_id)}.mp4")
+        relay = MediaRelay()
 
         self._add_on_datachannel(connection, peer_id)
         self._add_on_connection_state_change(connection, peer_id)
-        self._add_on_track(connection, peer_id, recorder, params.video_transform)
+        self._add_on_track(connection, peer_id, recorder, params.video_transform, relay)
 
         await connection.setRemoteDescription(offer)
         await recorder.start()
